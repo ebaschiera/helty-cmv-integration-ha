@@ -3,6 +3,7 @@ from typing import Any
 import logging
 
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     PRESET_BOOST,
     PRESET_NIGHT,
@@ -15,17 +16,19 @@ from .const import (
     DOMAIN
 )
 from homeassistant.components.fan import FanEntity, FanEntityFeature
-
+from .coordinator import HeltyDataUpdateCoordinator # Importa il nuovo coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    cmv = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([HeltyCMV(cmv)], True)
+    # Ottieni il coordinator creato in __init__.py invece dell'oggetto cmv
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]
+    async_add_entities([HeltyCMVFan(coordinator)], True)
 
 
-class HeltyCMV(FanEntity):
+# Eredita da CoordinatorEntity invece che solo da FanEntity
+class HeltyCMVFan(CoordinatorEntity, FanEntity):
     _attr_preset_modes = [
         PRESET_BOOST,
         PRESET_NIGHT,
@@ -36,10 +39,10 @@ class HeltyCMV(FanEntity):
 
     _attr_has_entity_name = False
 
-    def __init__(self, cmv):
-        self._cmv = cmv
-        self._attr_percentage = None
-        self._attr_preset_mode = None
+    def __init__(self, coordinator: HeltyDataUpdateCoordinator):
+        # Il costruttore ora riceve il coordinator
+        super().__init__(coordinator)
+        self._cmv = coordinator.device # Accediamo al dispositivo tramite il coordinator
         self._attr_unique_id = f"{self._cmv.cmv_id}_cmv_control"
         self._attr_name = f"{self._cmv.name} CMV Control"
 
@@ -52,35 +55,54 @@ class HeltyCMV(FanEntity):
             model="Flow",
         )
 
+    # La proprietà 'available' è ora GESTITA IN AUTOMATICO da CoordinatorEntity!
+    # Non è più necessario definirla. Sarà True se l'ultimo aggiornamento
+    # del coordinator è andato a buon fine.
+
     @property
-    def available(self) -> bool:
-        return self._cmv.online
+    def is_on(self) -> bool | None:
+        """Determina se la ventola è accesa basandosi sui dati del coordinator."""
+        return (self.percentage is not None and self.percentage > 0) or (self.preset_mode is not None)
+
+    @property
+    def percentage(self) -> int | None:
+        """Ottiene la velocità dai dati del coordinator."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("fan_mode")
+        return None
 
     @property
     def preset_mode(self) -> str | None:
-        return self._attr_preset_mode
+        """Ottiene il preset dai dati del coordinator."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("preset")
+        return None
 
+    # I metodi `async_set` rimangono simili, ma chiamano direttamente il dispositivo
+    # e poi forzano un refresh del coordinator per aggiornare subito lo stato.
     async def async_set_percentage(self, percentage: int) -> None:
-        if not await self._cmv.set_cmv_mode(percentage):
-            raise Exception("Cannot set {} fan percentage".format(percentage))
+        if await self._cmv.set_cmv_mode(percentage):
+            await self.coordinator.async_request_refresh()
+        else:
+            _LOGGER.error("Impossibile impostare la percentuale a %s", percentage)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        if not await self._cmv.set_cmv_mode(preset_mode):
-            raise Exception("Cannot set {} preset mode".format(preset_mode))
+        if await self._cmv.set_cmv_mode(preset_mode):
+            await self.coordinator.async_request_refresh()
+        else:
+            _LOGGER.error("Impossibile impostare il preset a %s", preset_mode)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        if not await self._cmv.set_cmv_mode(FAN_OFF):
-            raise Exception("Cannot set {} fan percentage to turn off fan".format(0))
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        if not await self._cmv.set_cmv_mode(FAN_LOW):
-            raise Exception("Cannot set {} fan percentage to turn off fan".format(0))
-
-    async def async_update(self) -> None:
-        cmv_state = await self._cmv.get_cmv_op_status()
-        if cmv_state:
-            self._attr_percentage = cmv_state.get("fan_mode", None)
-            self._attr_preset_mode = cmv_state.get("preset", None)
+        if await self._cmv.set_cmv_mode(FAN_OFF):
+            await self.coordinator.async_request_refresh()
         else:
-            self._attr_percentage = None
-            self._attr_preset_mode = None
+            _LOGGER.error("Impossibile spegnere la ventola")
+
+    async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs: Any) -> None:
+        if await self._cmv.set_cmv_mode(FAN_LOW):
+            await self.coordinator.async_request_refresh()
+        else:
+            _LOGGER.error("Impossibile accendere la ventola")
+
+    # RIMUOVERE il metodo async_update()!
+    # Il suo lavoro è ora svolto dal _async_update_data nel coordinator.

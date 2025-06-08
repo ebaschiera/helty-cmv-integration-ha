@@ -1,28 +1,26 @@
 from __future__ import annotations
-from typing import Any
-
 import logging
 
-from homeassistant.helpers.entity import DeviceInfo
-from .const import (
-    DOMAIN
-)
 from homeassistant.components.button import ButtonEntity
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .const import DOMAIN
+from .coordinator import HeltyDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    cmv = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([HeltyCMVResetFilter(cmv)], True)
+    coordinator: HeltyDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    async_add_entities([HeltyCMVResetFilter(coordinator)], True)
 
 
-class HeltyCMVResetFilter(ButtonEntity):
+class HeltyCMVResetFilter(CoordinatorEntity, ButtonEntity):
 
-    def __init__(self, cmv):
-        self._cmv = cmv
-        self._attr_is_on = None
+    def __init__(self, coordinator: HeltyDataUpdateCoordinator):
+        super().__init__(coordinator)
+        self._cmv = coordinator.device
         self._attr_unique_id = f"{self._cmv.cmv_id}_filter_reset"
         self._attr_name = f"{self._cmv.name} CMV Filter Usage Reset"
 
@@ -34,10 +32,6 @@ class HeltyCMVResetFilter(ButtonEntity):
             manufacturer="Helty",
             model="Flow",
         )
-
-    @property
-    def available(self) -> bool:
-        return self._cmv.online
 
     async def async_press(self) -> None:
         await self._cmv.reset_cmv_filters()

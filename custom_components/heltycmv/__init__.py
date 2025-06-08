@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import Platform, CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import DOMAIN
 from .cmv import HeltyCMV
+from .coordinator import HeltyDataUpdateCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.FAN, Platform.SWITCH, Platform.BUTTON]
 
@@ -15,15 +17,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Helty CMV from a config entry."""
 
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = HeltyCMV(entry.data["host"], entry.data["port"])
 
-    cmv_name = await hass.data[DOMAIN][entry.entry_id].get_cmv_name()
+    cmv_device = HeltyCMV(entry.data[CONF_HOST], entry.data[CONF_PORT])
 
-    if cmv_name is None:
-        return False
+    coordinator = HeltyDataUpdateCoordinator(hass, device=cmv_device)
 
-    hass.data[DOMAIN][entry.entry_id].name = cmv_name
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady:
+        raise
 
+    hass.data[DOMAIN][entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True

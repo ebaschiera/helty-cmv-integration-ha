@@ -3,30 +3,39 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.helpers.entity import DeviceInfo
-from .const import (
-    DOMAIN
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.const import PERCENTAGE, UnitOfTemperature
 
-from homeassistant.const import (
-    PERCENTAGE,
-    UnitOfTemperature,
-)
+from .const import DOMAIN
+from .coordinator import HeltyDataUpdateCoordinator
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    cmv = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([CMVIndoorTemperature(cmv), CMVOutdoorTemperature(cmv), CMVIndoorHumidity(cmv)], True)
+    # Ottieni il coordinator
+    coordinator: HeltyDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    # Aggiungi le entità passando il coordinator
+    async_add_entities(
+        [
+            CMVIndoorTemperature(coordinator),
+            CMVOutdoorTemperature(coordinator),
+            CMVIndoorHumidity(coordinator),
+        ],
+        True,
+    )
 
 
-class CMVBaseSensor(SensorEntity):
+# La classe base ora eredita da CoordinatorEntity
+class CMVBaseSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = False
 
-    def __init__(self, cmv):
-        self._cmv = cmv
-        self._state = None
+    def __init__(self, coordinator: HeltyDataUpdateCoordinator):
+        """Inizializza il sensore base."""
+        super().__init__(coordinator)
+        self._cmv = coordinator.device
 
     @property
     def device_info(self):
+        """Informazioni dispositivo."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._cmv.cmv_id)},
             name=self._cmv.name,
@@ -34,63 +43,61 @@ class CMVBaseSensor(SensorEntity):
             model="Flow",
         )
 
-    @property
-    def available(self) -> bool:
-        return self._cmv.online
-
 
 class CMVIndoorTemperature(CMVBaseSensor):
-    """Representation of a Sensor."""
-
+    """Sensore di Temperatura Interna."""
     device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
-    def __init__(self, cmv):
-        super().__init__(cmv)
+    def __init__(self, coordinator: HeltyDataUpdateCoordinator):
+        super().__init__(coordinator)
         self._attr_unique_id = f"{self._cmv.cmv_id}_indoor_temp"
         self._attr_name = f"{self._cmv.name} Indoor Temperature"
 
     @property
     def native_value(self) -> float | None:
-        return self._state
-
-    async def async_update(self) -> None:
-        self._state = await self._cmv.get_cmv_indoor_air_temperature()
+        """Restituisce il valore dal coordinator."""
+        # Leggi il valore direttamente dai dati del coordinator
+        if self.coordinator.data:
+            return self.coordinator.data.get("indoor_temp")
+        return None
 
 
 class CMVOutdoorTemperature(CMVBaseSensor):
-    """Representation of a Sensor."""
-
+    """Sensore di Temperatura Esterna."""
     device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
-    def __init__(self, cmv):
-        super().__init__(cmv)
+    def __init__(self, coordinator: HeltyDataUpdateCoordinator):
+        super().__init__(coordinator)
         self._attr_unique_id = f"{self._cmv.cmv_id}_outdoor_temp"
         self._attr_name = f"{self._cmv.name} Outdoor Temperature"
 
     @property
     def native_value(self) -> float | None:
-        return self._state
+        """Restituisce il valore dal coordinator."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("outdoor_temp")
+        return None
 
-    async def async_update(self) -> None:
-        self._state = await self._cmv.get_cmv_outdoor_air_temperature()
+    # RIMUOVI il metodo async_update()
 
 
 class CMVIndoorHumidity(CMVBaseSensor):
-    """Representation of a Sensor."""
-
+    """Sensore di Umidità Interna."""
     device_class = SensorDeviceClass.HUMIDITY
     _attr_native_unit_of_measurement = PERCENTAGE
 
-    def __init__(self, cmv):
-        super().__init__(cmv)
+    def __init__(self, coordinator: HeltyDataUpdateCoordinator):
+        super().__init__(coordinator)
         self._attr_unique_id = f"{self._cmv.cmv_id}_indoor_humidity"
         self._attr_name = f"{self._cmv.name} Indoor Humidity"
 
     @property
     def native_value(self) -> float | None:
-        return self._state
+        """Restituisce il valore dal coordinator."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("indoor_humidity")
+        return None
 
-    async def async_update(self) -> None:
-        self._state = await self._cmv.get_cmv_indoor_humidity()
+    # RIMUOVI il metodo async_update()
